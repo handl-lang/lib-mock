@@ -1,0 +1,217 @@
+--- mock -- spies, stubs and mock records for the handl test ecosystem.
+---
+--- A vitest/jest-inspired surface in pure handl. Because handl values are
+--- immutable (ADR-0072 deterministic dataflow — there is no mutable cell a
+--- spy could append to behind the caller's back), a spy **threads its
+--- journal**: `mock.call(s, args)` returns `{ value, spy }`, where `value`
+--- is the impl's result and `spy` is the updated record carrying the new
+--- call entry `{ args, result }`. Hand the returned `spy` to the next call
+--- and to the inspectors.
+---
+--- A spy is a plain record `{ target, value, calls }`:
+---
+---   target the wrapped arrow, or `null` for a stub
+---   value  the constant a stub returns (ignored when `target` is set)
+---   calls  the journal, oldest first: `[ { args, result }, ... ]`
+---
+--- `mock(rec)` maps a record of arrows to a record of spies (members that
+--- are already spies pass through); `mock.override(m, name, f)` swaps one
+--- member — raw arrows are wrapped, spies/stubs are kept. The `assert_*`
+--- helpers mint the same canonical `__ctor__` `data.Result` records
+--- lib-test's `assert.*` helpers produce, so `match r { ok(v): …,
+--- err(e): … }` dispatches identically.
+
+from "combinators" import { apply }
+from "hash_map" import { entries, has, set }
+from "typeof" import * as typeof
+
+--- Local array length (kept dependency-free; `array.len` is ambient but
+--- the flat `from "array" import` spelling resolves to the bytes-flavoured
+--- op in some host chains).
+alen := (xs) ~> {
+  while { xs: xs, n: 0 } {
+    [xs, n] ~> match xs {
+      []: { out: n },
+      [h, ...t]: { state: { xs: t, n: n + 1 } }
+    }
+  }
+}
+
+mk_spy := (f, v) ~> do {
+  { target: f, value: v, calls: [] }
+}
+
+--- A spy/stub is a record carrying our three journal fields.
+--- `typeof.is` guards the `hash_map.has` probes (they error on
+--- non-objects; `&&` short-circuits); arrows also report `obj`, so the
+--- field probes do the real discrimination. `has` is presence-based —
+--- `get_or` cannot be used because it treats a present `null` as absent.
+is_spy := (v) ~> typeof.is(v, typeof.obj())
+  && has(v, "calls") && has(v, "target") && has(v, "value")
+
+--- Arrows expose a `params` name array; plain records do not.
+is_arrow := (v) ~> typeof.is(v, typeof.obj()) && has(v, "params")
+
+ok_res := (v) ~> ({ "__ctor__": sym.seeded("data.Result.ok"),
+                    "value": v,
+                    "type": { "__former__": sym.seeded("data.Result"),
+                              "indices": [null, null] } })
+
+err_res := (v) ~> ({ "__ctor__": sym.seeded("data.Result.err"),
+                     "value": v,
+                     "type": { "__former__": sym.seeded("data.Result"),
+                               "indices": [null, null] } })
+
+--- Wrap an arrow as a spy. Calls go through `mock.call`, which returns
+--- `{ value, spy }` — the updated spy carries the appended journal entry.
+--- @param {f} - the arrow to wrap
+--- @returns {Value} a spy record `{ target, value, calls }`
+export spy : Value ~> Value := (f) ~> mk_spy(f, null)
+
+--- A spy that ignores its arguments and returns `v` on every call.
+--- @param {v} - the constant result
+--- @returns {Value} a stub spy record
+export stub : Value ~> Value := (v) ~> mk_spy(null, v)
+
+--- Wrap `v` as a spy unless it already is one; non-arrow values become
+--- stubs so `mock({ version: "1.0" })` records still work.
+as_spy := (v) ~> if is_spy(v) {
+  v
+} else {
+  if is_arrow(v) { spy(v) } else { stub(v) }
+}
+
+--- Map a record of arrows to a record of spies. Members that are already
+--- spies (or stubs) pass through unchanged, so `mock.override` output can
+--- be fed back in; non-arrow members become stubs.
+--- @param {members} - record mapping names to arrows (or spies)
+--- @returns {Value} record mapping names to spies
+export mock : Value ~> Value := (members) ~> {
+  while { rest: entries(members), acc: {} } {
+    [rest, acc] ~> match rest {
+      []: { out: acc },
+      [[name, v], ...t]: { state: { rest: t, acc: set(acc, name, as_spy(v)) } }
+    }
+  }
+}
+
+--- Swap one member of a mock record. `f` may be a raw arrow (wrapped as a
+--- fresh spy) or an existing spy/stub (kept as-is, journal intact).
+--- @param {m} - a mock record from `mock.mock`
+--- @param {name} - the member to replace
+--- @param {f} - the replacement arrow or spy
+--- @returns {Value} a new mock record
+export override : (Value, String, Value) ~> Value := (m, name, f) ~> set(m, name, as_spy(f))
+
+--- Invoke a spy. `args` is an Array spread over the impl's parameters by
+--- `combinators.apply`. Returns `{ value, spy }`: `value` is the impl's
+--- result (or the stub's constant) and `spy` is the updated record whose
+--- `calls` journal gained `{ args, result }`. Graded `[1]`: the wrapped
+--- arrow may be effectful.
+--- @param {s} - a spy record
+--- @param {args} - Array of arguments
+--- @returns {Value} `{ value, spy }`
+export call : (Value, Array) ~[1]~> Value := (s, args) ~> do {
+  v := if s.target == null { s.value } else { apply(s.target, args) }
+  entry := { args: args, result: v }
+  { value: v,
+    spy: { target: s.target, value: s.value, calls: [...s.calls, entry] } }
+}
+
+--- The spy's call journal, oldest first: `[ { args, result }, ... ]`.
+export calls : Value ~> Value := (s) ~> s.calls
+
+--- Number of recorded calls.
+export call_count : Value ~> Number := (s) ~> alen(s.calls)
+
+--- Whether the spy has been called at least once.
+export called : Value ~> Bool := (s) ~> alen(s.calls) > 0
+
+--- Whether any recorded call's `args` array equals `want` (deep `==`).
+export called_with : (Value, Array) ~> Bool := (s, want) ~> {
+  while { xs: s.calls } {
+    (st) ~> match st.xs {
+      []: { out: false },
+      [e, ...t]: if e.args == want { { out: true } } else { { state: { xs: t } } }
+    }
+  }
+}
+
+--- The journal entry at 0-based index `n`, or `null` when out of range.
+export nth_call : (Value, Number) ~> Value := (s, n) ~> {
+  while { xs: s.calls, i: 0 } {
+    [xs, i] ~> match xs {
+      []: { out: null },
+      [h, ...t]: if i == n { { out: h } } else { { state: { xs: t, i: i + 1 } } }
+    }
+  }
+}
+
+--- The most recent journal entry, or `null` when the spy was never called.
+export last_call : Value ~> Value := (s) ~> {
+  while { xs: s.calls, last: null } {
+    [xs, last] ~> match xs {
+      []: { out: last },
+      [h, ...t]: { state: { xs: t, last: h } }
+    }
+  }
+}
+
+--- Every recorded result, oldest first.
+export results : Value ~> Value := (s) ~> {
+  while { xs: s.calls, acc: [] } {
+    [xs, acc] ~> match xs {
+      []: { out: acc },
+      [h, ...t]: { state: { xs: t, acc: [...acc, h.result] } }
+    }
+  }
+}
+
+--- Assert the spy was called at least once. Returns a `data.Result` ok/err
+--- record in lib-test's `assert.*` shape.
+export assert_called : Value ~> Value := (s) ~> if called(s) {
+  ok_res(true)
+} else {
+  err_res({
+    message: "assertion failed: expected spy to have been called",
+    assertion: "called",
+    expected: "at least one call",
+    actual: calls(s)
+  })
+}
+
+--- Assert the spy was never called.
+export assert_not_called : Value ~> Value := (s) ~> if !called(s) {
+  ok_res(true)
+} else {
+  err_res({
+    message: "assertion failed: expected spy not to have been called",
+    assertion: "not_called",
+    expected: "no calls",
+    actual: calls(s)
+  })
+}
+
+--- Assert the spy was called exactly `n` times.
+export assert_call_count : (Value, Number) ~> Value := (s, n) ~> if call_count(s) == n {
+  ok_res(true)
+} else {
+  err_res({
+    message: "assertion failed: unexpected call count",
+    assertion: "call_count",
+    expected: n,
+    actual: call_count(s)
+  })
+}
+
+--- Assert some recorded call's `args` array equals `want` (deep `==`).
+export assert_called_with : (Value, Array) ~> Value := (s, want) ~> if called_with(s, want) {
+  ok_res(true)
+} else {
+  err_res({
+    message: "assertion failed: no recorded call matched the expected args",
+    assertion: "called_with",
+    expected: want,
+    actual: calls(s)
+  })
+}

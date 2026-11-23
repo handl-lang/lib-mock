@@ -1,0 +1,1 @@
+{ modules: ["mock"], description: "Spies, stubs and mock records for handl tests.", license: "MIT" }

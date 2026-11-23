@@ -1,0 +1,104 @@
+from "./mock" import * as mock
+
+--- fixtures: a spy over a 2-ary arrow, a stub, and a mock record.
+
+adder := mock.spy((a, b) ~> a + b)
+
+const7 := mock.stub(7)
+
+svc := mock.mock({
+  fetch: (k) ~> "v:" + k,
+  ping: () ~> "pong"
+})
+
+--- two recorded calls threaded through the journal:
+--- call(adder,[1,2]) -> 3, then call(..,[5,6]) -> 11.
+
+adder2 := mock.call(mock.call(adder, [1, 2]).spy, [5, 6]).spy
+
+--- construction -------------------------------------------------------
+
+test_spy_call_returns_value := assert mock.call(mock.spy((x) ~> x * x), [3]).value = 9
+
+test_spy_journals_args_and_result := assert mock.nth_call(
+  mock.call(mock.spy((x) ~> x + 1), [4]).spy, 0).args = [4]
+
+test_spy_journals_result := assert mock.nth_call(
+  mock.call(mock.spy((x) ~> x + 1), [4]).spy, 0).result = 5
+
+test_stub_returns_constant := assert mock.call(mock.stub(7), [1, 2, 3]).value = 7
+
+test_stub_ignores_args_and_journals := assert mock.call_count(
+  mock.call(mock.stub("x"), [9]).spy) = 1
+
+--- the journal is immutable: the original spy sees no calls ------------
+
+test_original_spy_unchanged := assert mock.called(adder) = false
+
+test_threaded_spy_has_two_calls := assert mock.call_count(adder2) = 2
+
+--- inspection ---------------------------------------------------------
+
+test_calls_returns_journal := assert mock.calls(adder2)[0].result = 3
+
+test_call_count := assert mock.call_count(adder2) = 2
+
+test_called_true := assert mock.called(adder2) = true
+
+test_called_false := assert mock.called(adder) = false
+
+test_called_with_hit := assert mock.called_with(adder2, [5, 6]) = true
+
+test_called_with_miss := assert mock.called_with(adder2, [9, 9]) = false
+
+test_nth_call_first := assert mock.nth_call(adder2, 0).result = 3
+
+test_nth_call_second := assert mock.nth_call(adder2, 1).args = [5, 6]
+
+test_nth_call_out_of_range := assert mock.nth_call(adder2, 7) = null
+
+test_last_call := assert mock.last_call(adder2).result = 11
+
+test_last_call_empty := assert mock.last_call(adder) = null
+
+test_results := assert mock.results(adder2) = [3, 11]
+
+--- mock records -------------------------------------------------------
+
+test_mock_wraps_members := assert mock.call(svc.fetch, ["k"]).value = "v:k"
+
+test_mock_member_ping := assert mock.call(svc.ping, []).value = "pong"
+
+test_mock_passes_spies_through := assert mock.call(
+  mock.mock({ s: adder2 }).s, [2, 2]).value = 4
+
+test_override_with_stub := assert mock.call(
+  mock.override(svc, "fetch", mock.stub("stubbed")).fetch, ["k"]).value = "stubbed"
+
+test_override_with_arrow := assert mock.call(
+  mock.override(svc, "fetch", (k) ~> "raw:" + k).fetch, ["k"]).value = "raw:k"
+
+test_override_keeps_other_members := assert mock.call(
+  mock.override(svc, "fetch", mock.stub(0)).ping, []).value = "pong"
+
+--- assert helpers: lib-test-compatible ok/err Result records ------------
+
+ok_of := (r) ~> match r { ok(_): true, _: false }
+
+err_of := (r) ~> match r { err(_): true, _: false }
+
+test_assert_called_ok := assert ok_of(mock.assert_called(adder2)) = true
+
+test_assert_called_err := assert err_of(mock.assert_called(adder)) = true
+
+test_assert_not_called_ok := assert ok_of(mock.assert_not_called(adder)) = true
+
+test_assert_not_called_err := assert err_of(mock.assert_not_called(adder2)) = true
+
+test_assert_call_count_ok := assert ok_of(mock.assert_call_count(adder2, 2)) = true
+
+test_assert_call_count_err := assert err_of(mock.assert_call_count(adder2, 3)) = true
+
+test_assert_called_with_ok := assert ok_of(mock.assert_called_with(adder2, [1, 2])) = true
+
+test_assert_called_with_err := assert err_of(mock.assert_called_with(adder2, [7, 7])) = true
