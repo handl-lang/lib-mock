@@ -6,7 +6,7 @@
 
 [[repos]]
 name = "handl-lang/lib-mock"
-dir = "/home/luis/GitHub/handl-lang/lib-mock"
+dir = "~//GitHub/handl-lang/lib-mock"
 branch = "refs/heads/main"
   [repos.runner]
   kind = "script"
