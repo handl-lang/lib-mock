@@ -42,7 +42,7 @@ err(e): … }` dispatches identically.
 src/mock.hnl        the library (arrow dialect, ~> exports)
 src/mock.test.hnl   the .test.hnl suite
 pkg.hnl             package manifest — modules, deps, description, license
-ci.sh               bupha entry
+workflows/gate.yaml               bupha entry (handl-gates)
 scripts/hnl-gate.sh the gate
 ```
 
