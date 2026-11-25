@@ -10,7 +10,7 @@ vitest/jest-inspired surface in pure handl.
 | `src/mock.hnl` | the library |
 | `src/mock.test.hnl` | the .hnl test suite |
 | `pkg.hnl` | package manifest — `modules: ["mock"]` |
-| `scripts/hnl-gate.sh`, `ci.sh` | the gate / bupha entry |
+| `scripts/hnl-gate.sh`, `workflows/gate.yaml` | the gate / bupha entry |
 
 ## Contract
 
