@@ -111,7 +111,7 @@ export override : (Value, String, Value) ~> Value := (m, name, f) ~> set(m, name
 --- @param {s} - a spy record
 --- @param {args} - Array of arguments
 --- @returns {Value} `{ value, spy }`
-export call : (Value, Array) ~[1]~> Value := (s, args) ~> do {
+export call : (Value, Array) ~>[1] Value := (s, args) ~> do {
   v := if s.target == null { s.value } else { apply(s.target, args) }
   entry := { args: args, result: v }
   { value: v,
